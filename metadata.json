@@ -1,0 +1,5 @@
+{
+  "name": "Fire Roulette",
+  "description": "A random voice chat roulette with fire animations.",
+  "requestFramePermissions": ["microphone"]
+}

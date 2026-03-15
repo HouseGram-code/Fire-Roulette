@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: rooms
+    // Document ID: auto-generated
+    // Fields:
+    //   - offer: map (optional) - The WebRTC offer SDP
+    //   - answer: map (optional) - The WebRTC answer SDP
+    //   - createdAt: timestamp (required) - When the room was created
+    //   - status: string (required) - 'waiting' or 'connected'
+    //
+    // Collection: rooms/{roomId}/callerCandidates
+    // Document ID: auto-generated
+    // Fields:
+    //   - candidate: string (required)
+    //   - sdpMid: string (required)
+    //   - sdpMLineIndex: number (required)
+    //
+    // Collection: rooms/{roomId}/calleeCandidates
+    // Document ID: auto-generated
+    // Fields:
+    //   - candidate: string (required)
+    //   - sdpMid: string (required)
+    //   - sdpMLineIndex: number (required)
+    //
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidRoom(data) {
+      return data.keys().hasAll(['createdAt', 'status']) &&
+             data.status in ['waiting', 'connected'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidCandidate(data) {
+      return data.keys().hasAll(['candidate', 'sdpMid', 'sdpMLineIndex']) &&
+             data.candidate is string &&
+             data.sdpMid is string &&
+             data.sdpMLineIndex is number;
+    }
+
+    match /rooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidRoom(request.resource.data);
+      allow update: if isAuthenticated() && isValidRoom(request.resource.data);
+      allow delete: if isAuthenticated();
+
+      match /callerCandidates/{candidateId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && isValidCandidate(request.resource.data);
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && isValidCandidate(request.resource.data);
+      }
+    }
+  }
+}
