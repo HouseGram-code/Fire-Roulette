@@ -40,10 +40,8 @@ service cloud.firestore {
     }
 
     function isValidCandidate(data) {
-      return data.keys().hasAll(['candidate', 'sdpMid', 'sdpMLineIndex']) &&
-             data.candidate is string &&
-             data.sdpMid is string &&
-             data.sdpMLineIndex is number;
+      return data.keys().hasAll(['candidate']) &&
+             data.candidate is string;
     }
 
     match /rooms/{roomId} {

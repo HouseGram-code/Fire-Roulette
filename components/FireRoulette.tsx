@@ -295,7 +295,7 @@ export default function FireRoulette() {
               >
                 <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
                 {user ? <Search className="w-6 h-6 relative z-10" /> : <LogIn className="w-6 h-6 relative z-10" />}
-                <span className="relative z-10">{user ? 'Начать поиск' : 'Войти через Google'}</span>
+                <span className="relative z-10">{user ? 'Начать поиск' : 'Чат рулетка огненная'}</span>
               </button>
             )}
             
