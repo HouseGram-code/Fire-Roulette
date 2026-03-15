@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, MicOff, PhoneOff, Flame, Search, LogIn } from 'lucide-react';
-import { db, auth, signInWithGoogle, onAuthStateChanged } from '@/lib/firebase';
+import { Mic, MicOff, PhoneOff, Flame, Search, LogIn, LogOut, MoreVertical, X, ShieldCheck, Info, HelpCircle } from 'lucide-react';
+import { db, auth, signInWithGoogle, logOut, onAuthStateChanged } from '@/lib/firebase';
 import { User } from 'firebase/auth';
 import {
   collection,
@@ -29,6 +29,7 @@ export default function FireRoulette() {
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -87,6 +88,17 @@ export default function FireRoulette() {
     } catch (err: any) {
       console.error('Login error:', err);
       setError('Ошибка авторизации: ' + err.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (appState !== 'IDLE') {
+        hangUp();
+      }
+      await logOut();
+    } catch (err: any) {
+      console.error('Logout error:', err);
     }
   };
 
@@ -270,10 +282,95 @@ export default function FireRoulette() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[80vh] w-full max-w-md mx-auto p-6">
-      <audio ref={remoteAudioRef} autoPlay />
+    <div className="flex flex-col items-center min-h-[100dvh] w-full max-w-md mx-auto p-6 relative">
+      {/* Header */}
+      <div className="w-full flex justify-between items-center mb-8 pt-4">
+        <div className="flex items-center gap-2">
+          <Flame className="w-6 h-6 text-orange-500" />
+          <h1 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+            Fire Roulette
+          </h1>
+        </div>
+        <button
+          onClick={() => setShowInfo(true)}
+          className="p-2 rounded-full hover:bg-neutral-800 transition-colors text-neutral-400 hover:text-white"
+        >
+          <MoreVertical className="w-6 h-6" />
+        </button>
+      </div>
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
+        {showInfo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowInfo(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-white">О приложении</h2>
+                <button
+                  onClick={() => setShowInfo(false)}
+                  className="p-2 rounded-full hover:bg-neutral-800 transition-colors text-neutral-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <Info className="w-5 h-5 text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold mb-1">Что это дает?</h3>
+                    <p className="text-neutral-400 text-sm leading-relaxed">
+                      Анонимное голосовое общение со случайными собеседниками. Вы можете найти новых друзей или просто приятно провести время за разговором.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold mb-1">Безопасность</h3>
+                    <p className="text-neutral-400 text-sm leading-relaxed">
+                      Ваши разговоры не записываются и не сохраняются на серверах. Соединение происходит напрямую между пользователями (P2P), что гарантирует максимальную приватность.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                    <HelpCircle className="w-5 h-5 text-green-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold mb-1">Как пользоваться?</h3>
+                    <p className="text-neutral-400 text-sm leading-relaxed">
+                      Авторизуйтесь через Google, нажмите «Начать поиск» и разрешите доступ к микрофону. Система автоматически подберет вам собеседника.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 flex flex-col items-center justify-center w-full pb-20">
+        <audio ref={remoteAudioRef} autoPlay />
+
+        <AnimatePresence mode="wait">
         {appState === 'IDLE' && (
           <motion.div
             key="idle"
@@ -289,14 +386,26 @@ export default function FireRoulette() {
             {isAuthChecking ? (
               <div className="w-full py-4 text-center text-neutral-400">Загрузка...</div>
             ) : (
-              <button
-                onClick={user ? startSearch : handleLogin}
-                className="group relative w-full flex items-center justify-center gap-3 px-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-2xl font-bold text-lg overflow-hidden transition-all hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(239,68,68,0.4)] active:scale-95"
-              >
-                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
-                {user ? <Search className="w-6 h-6 relative z-10" /> : <LogIn className="w-6 h-6 relative z-10" />}
-                <span className="relative z-10">{user ? 'Начать поиск' : 'Чат рулетка огненная'}</span>
-              </button>
+              <div className="w-full flex flex-col gap-4">
+                <button
+                  onClick={user ? startSearch : handleLogin}
+                  className="group relative w-full flex items-center justify-center gap-3 px-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-2xl font-bold text-lg overflow-hidden transition-all hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(239,68,68,0.4)] active:scale-95"
+                >
+                  <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+                  {user ? <Search className="w-6 h-6 relative z-10" /> : <LogIn className="w-6 h-6 relative z-10" />}
+                  <span className="relative z-10">{user ? 'Начать поиск' : 'Чат рулетка огненная'}</span>
+                </button>
+                
+                {user && (
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-neutral-800 text-neutral-300 rounded-xl font-medium transition-colors hover:bg-neutral-700 hover:text-white"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    Выйти из Google
+                  </button>
+                )}
+              </div>
             )}
             
             {error && <p className="text-red-400 text-sm text-center">{error}</p>}
@@ -400,6 +509,7 @@ export default function FireRoulette() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }
