@@ -18,7 +18,8 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
-  getDoc
+  getDoc,
+  runTransaction
 } from 'firebase/firestore';
 
 type AppState = 'IDLE' | 'SEARCHING' | 'CONNECTED';
@@ -48,7 +49,10 @@ export default function FireRoulette() {
 
   const hangUp = async () => {
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    
     remoteStreamRef.current?.getTracks().forEach((track) => track.stop());
+    remoteStreamRef.current = null;
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -63,6 +67,10 @@ export default function FireRoulette() {
         console.error('Error deleting room:', e);
       }
       roomIdRef.current = null;
+    }
+
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
     }
 
     setAppState('IDLE');
@@ -107,9 +115,26 @@ export default function FireRoulette() {
     setAppState('SEARCHING');
 
     try {
-      // Get local media
-      const stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-      localStreamRef.current = stream;
+      // Get local media with improved audio constraints
+      if (!localStreamRef.current) {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: false, 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          } 
+        });
+        localStreamRef.current = stream;
+      }
+
+      // Clean up any previous room state
+      if (roomIdRef.current) {
+        try {
+          await deleteDoc(doc(db, 'rooms', roomIdRef.current));
+        } catch (e) {}
+        roomIdRef.current = null;
+      }
 
       // Check for waiting rooms
       const roomsRef = collection(db, 'rooms');
@@ -119,7 +144,11 @@ export default function FireRoulette() {
       if (!querySnapshot.empty) {
         // Join existing room
         const roomDoc = querySnapshot.docs[0];
-        await joinRoomById(roomDoc.id);
+        const joined = await joinRoomById(roomDoc.id);
+        if (!joined) {
+          // If room was taken, create a new one
+          await createRoom();
+        }
       } else {
         // Create new room
         await createRoom();
@@ -173,7 +202,7 @@ export default function FireRoulette() {
     await setDoc(roomDoc, roomWithOffer);
 
     // Listen for remote answer
-    onSnapshot(roomDoc, (snapshot) => {
+    const unsubscribeRoom = onSnapshot(roomDoc, (snapshot) => {
       const data = snapshot.data();
       if (!peerConnection.currentRemoteDescription && data && data.answer) {
         const rtcSessionDescription = new RTCSessionDescription(data.answer);
@@ -184,75 +213,95 @@ export default function FireRoulette() {
 
     // Listen for remote ICE candidates
     const calleeCandidatesCollection = collection(roomDoc, 'calleeCandidates');
-    onSnapshot(calleeCandidatesCollection, (snapshot) => {
+    const unsubscribeCallee = onSnapshot(calleeCandidatesCollection, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           let data = change.doc.data();
           peerConnection.addIceCandidate(new RTCIceCandidate(data));
         }
       });
+    });
+
+    peerConnection.addEventListener('connectionstatechange', () => {
+      if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+        unsubscribeRoom();
+        unsubscribeCallee();
+      }
     });
   };
 
-  const joinRoomById = async (roomId: string) => {
-    roomIdRef.current = roomId;
+  const joinRoomById = async (roomId: string): Promise<boolean> => {
     const roomDoc = doc(db, 'rooms', roomId);
 
-    // Update status to connected so no one else joins
-    await updateDoc(roomDoc, { status: 'connected' });
+    try {
+      const roomData = await runTransaction(db, async (transaction) => {
+        const roomSnapshot = await transaction.get(roomDoc);
+        if (!roomSnapshot.exists()) {
+          throw new Error("Room does not exist");
+        }
+        const data = roomSnapshot.data();
+        if (data.status !== 'waiting') {
+          throw new Error("Room is no longer waiting");
+        }
+        transaction.update(roomDoc, { status: 'connected' });
+        return data;
+      });
 
-    const peerConnection = new RTCPeerConnection(configuration);
-    peerConnectionRef.current = peerConnection;
+      roomIdRef.current = roomId;
+      const peerConnection = new RTCPeerConnection(configuration);
+      peerConnectionRef.current = peerConnection;
 
-    registerPeerConnectionListeners(peerConnection);
+      registerPeerConnectionListeners(peerConnection);
 
-    localStreamRef.current?.getTracks().forEach((track) => {
-      peerConnection.addTrack(track, localStreamRef.current!);
-    });
+      localStreamRef.current?.getTracks().forEach((track) => {
+        peerConnection.addTrack(track, localStreamRef.current!);
+      });
 
-    // Collect ICE candidates
-    const calleeCandidatesCollection = collection(roomDoc, 'calleeCandidates');
-    peerConnection.addEventListener('icecandidate', (event) => {
-      if (!event.candidate) return;
-      addDoc(calleeCandidatesCollection, event.candidate.toJSON());
-    });
+      // Collect ICE candidates
+      const calleeCandidatesCollection = collection(roomDoc, 'calleeCandidates');
+      peerConnection.addEventListener('icecandidate', (event) => {
+        if (!event.candidate) return;
+        addDoc(calleeCandidatesCollection, event.candidate.toJSON());
+      });
 
-    // Get offer
-    const roomSnapshot = await getDoc(roomDoc);
-    const roomData = roomSnapshot.data();
-    if (!roomData || !roomData.offer) {
-      setError('Room offer not found');
-      setAppState('IDLE');
-      return;
-    }
+      const offer = roomData.offer;
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
-    const offer = roomData.offer;
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      // Create answer
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
 
-    // Create answer
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
+      const roomWithAnswer = {
+        answer: {
+          type: answer.type,
+          sdp: answer.sdp,
+        },
+      };
+      await updateDoc(roomDoc, roomWithAnswer);
 
-    const roomWithAnswer = {
-      answer: {
-        type: answer.type,
-        sdp: answer.sdp,
-      },
-    };
-    await updateDoc(roomDoc, roomWithAnswer);
+      // Listen for remote ICE candidates
+      const callerCandidatesCollection = collection(roomDoc, 'callerCandidates');
+      const unsubscribeCaller = onSnapshot(callerCandidatesCollection, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            let data = change.doc.data();
+            peerConnection.addIceCandidate(new RTCIceCandidate(data));
+          }
+        });
+      });
 
-    // Listen for remote ICE candidates
-    const callerCandidatesCollection = collection(roomDoc, 'callerCandidates');
-    onSnapshot(callerCandidatesCollection, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          let data = change.doc.data();
-          peerConnection.addIceCandidate(new RTCIceCandidate(data));
+      peerConnection.addEventListener('connectionstatechange', () => {
+        if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+          unsubscribeCaller();
         }
       });
-    });
 
-    setAppState('CONNECTED');
+      setAppState('CONNECTED');
+      return true;
+    } catch (e) {
+      console.log("Failed to join room:", e);
+      return false;
+    }
   };
 
   const registerPeerConnectionListeners = (peerConnection: RTCPeerConnection) => {
@@ -261,11 +310,12 @@ export default function FireRoulette() {
       remoteStreamRef.current = remoteStream;
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.play().catch(e => console.error('Audio play error:', e));
       }
     });
 
     peerConnection.addEventListener('connectionstatechange', () => {
-      if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+      if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
         hangUp();
       }
     });
@@ -284,7 +334,7 @@ export default function FireRoulette() {
   return (
     <div className="flex flex-col items-center min-h-[100dvh] w-full max-w-md mx-auto p-6 relative">
       <div className="flex-1 flex flex-col items-center justify-center w-full pb-20">
-        <audio ref={remoteAudioRef} autoPlay />
+        <audio ref={remoteAudioRef} autoPlay playsInline />
 
         <AnimatePresence mode="wait">
         {appState === 'IDLE' && (
