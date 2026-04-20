@@ -10,7 +10,7 @@ export default function FireRoulette({ onDisconnect }: FireRouletteProps) {
   const [status, setStatus] = useState<'idle' | 'searching' | 'connected' | 'ended'>('idle');
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (status === 'connected') {
